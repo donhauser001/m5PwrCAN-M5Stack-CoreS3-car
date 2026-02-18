@@ -77,8 +77,8 @@
 #define D_LIMIT        300.0f // D 项最大贡献 (RPM), 与 OUTPUT_LIMIT 一致, 保证D项充分制动
 
 // ============ 速度补偿 (防漂移) ============
-#define VELOCITY_K           0.10f   // 线速度→RPM增益 (恢复阶段已由startupGraceActive保护)
-#define VELOCITY_CORR_LIMIT  15.0f   // 速度修正最大贡献(RPM)
+#define VELOCITY_K           0.003f  // 速度→目标角修正 (度/(mm/s)), 500mm/s→1.5°, ×Kp=26RPM
+#define VELOCITY_CORR_LIMIT  3.0f    // 目标角修正上限 (度), 3°×Kp=52RPM等效
 #define VELOCITY_LPF_ALPHA   0.98f   // 速度低通滤波 (~0.25s响应, 恢复阶段归零不受影响)
 // 偏航修正: 轮速和(旋转分量)反馈增益, 防止原地自旋
 #define YAW_K                0.05f
