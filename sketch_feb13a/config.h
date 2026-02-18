@@ -70,16 +70,16 @@
 // ============ PID 默认参数 (速度模式: 输出单位 RPM) ============
 #define DEFAULT_KP   17.5f   // RPM/degree (实测最佳值, 配合GAIN=6: 1°→105mA, 重力66mA)
 #define DEFAULT_KI   0.5f    // 消除稳态角度偏差; Ki*limit=10RPM封顶
-#define DEFAULT_KD   3.0f    // RPM/(deg/s) (匹配高Kp, GAIN=6下D项有充足制动余量)
+#define DEFAULT_KD   1.40f   // RPM/(deg/s) 用户实测最佳值
 #define INTEGRAL_LIMIT 20.0f  // 积分限幅 (deg·s); Ki*limit=10RPM封顶, 防止过冲
 #define INTEGRAL_DECAY_THRESHOLD 2.0f  // |error|>此值时积分开始衰减, 大扰动时让P+D主导
 #define INTEGRAL_DECAY_RATE      0.95f // 大误差时每周期积分乘以此值(快速衰减)
 #define D_LIMIT        300.0f // D 项最大贡献 (RPM), 与 OUTPUT_LIMIT 一致, 保证D项充分制动
 
 // ============ 速度补偿 (防漂移) ============
-#define VELOCITY_K           0.05f   // 线速度→RPM增益
-#define VELOCITY_CORR_LIMIT  5.0f    // 速度修正最大贡献(RPM)
-#define VELOCITY_LPF_ALPHA   0.99f   // 速度低通滤波
+#define VELOCITY_K           0.10f   // 线速度→RPM增益 (恢复阶段已由startupGraceActive保护)
+#define VELOCITY_CORR_LIMIT  15.0f   // 速度修正最大贡献(RPM)
+#define VELOCITY_LPF_ALPHA   0.98f   // 速度低通滤波 (~0.25s响应, 恢复阶段归零不受影响)
 // 偏航修正: 轮速和(旋转分量)反馈增益, 防止原地自旋
 #define YAW_K                0.05f
 

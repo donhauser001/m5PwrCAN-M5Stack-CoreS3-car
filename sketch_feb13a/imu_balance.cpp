@@ -220,11 +220,15 @@ void balanceControl(float dt) {
     float dTerm = constrain(useKd * filteredGyro, -D_LIMIT, D_LIMIT);
 
     float rawOutput = (pTerm + iTerm + dTerm) * BALANCE_DIR;
-    filteredLinSpeed = VELOCITY_LPF_ALPHA * filteredLinSpeed
-                     + (1.0f - VELOCITY_LPF_ALPHA) * linearSpeed;
-    float velCorr = constrain(filteredLinSpeed * VELOCITY_K,
-                              -VELOCITY_CORR_LIMIT, VELOCITY_CORR_LIMIT);
-    rawOutput -= velCorr;
+    if (!startupGraceActive) {
+        filteredLinSpeed = VELOCITY_LPF_ALPHA * filteredLinSpeed
+                         + (1.0f - VELOCITY_LPF_ALPHA) * linearSpeed;
+        float velCorr = constrain(filteredLinSpeed * VELOCITY_K,
+                                  -VELOCITY_CORR_LIMIT, VELOCITY_CORR_LIMIT);
+        rawOutput -= velCorr;
+    } else {
+        filteredLinSpeed = 0;
+    }
     dbgPidRaw = rawOutput;
     float clampedOutput = constrain(rawOutput, -(float)OUTPUT_LIMIT, (float)OUTPUT_LIMIT);
     dbgPidClamped = clampedOutput;
