@@ -1,10 +1,7 @@
 #pragma once
 /**
- * imu_balance.h — IMU 姿态估算 + PID 自平衡控制
+ * imu_balance.h — IMU 姿态估算 + PID 自平衡控制 (无需校准, 用固定 PITCH_MOUNT_OFFSET)
  */
-
-// IMU 校准 (采集500次取平均, 约2秒)
-void calibrateIMU();
 
 // 姿态更新 (互补滤波, 每个控制周期调用)
 void updateIMU(float dt);

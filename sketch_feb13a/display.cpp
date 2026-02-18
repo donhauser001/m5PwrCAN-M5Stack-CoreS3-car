@@ -22,6 +22,46 @@ void drawMainUI() {
 void updateDisplay() {
     float displayPitch = currentPitch + PITCH_MOUNT_OFFSET;
 
+    // --- 诊断模式: 大字显示原始 Pitch + 滤波 Pitch，方便找平衡点 ---
+    if (diagMode) {
+        M5.Lcd.fillRect(0, 20, screenW, screenH - 20, BLACK);
+        M5.Lcd.setTextDatum(TL_DATUM);
+
+        M5.Lcd.setTextSize(2);
+        M5.Lcd.setTextColor(YELLOW, BLACK);
+        M5.Lcd.setCursor(4, 24);
+        M5.Lcd.printf("RAW Pitch");
+
+        M5.Lcd.setTextSize(4);
+        M5.Lcd.setTextColor(WHITE, BLACK);
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%+7.2f", rawAccelPitchDeg);
+        M5.Lcd.setCursor(4, 50);
+        M5.Lcd.print(buf);
+
+        M5.Lcd.setTextSize(2);
+        M5.Lcd.setTextColor(GREEN, BLACK);
+        M5.Lcd.setCursor(4, 100);
+        M5.Lcd.printf("Filt: %+7.2f", displayPitch);
+
+        M5.Lcd.setTextSize(1);
+        M5.Lcd.setTextColor(CYAN, BLACK);
+        M5.Lcd.setCursor(4, 130);
+        M5.Lcd.printf("ay=%+.3f  az=%+.3f", (double)rawAccelAy, (double)rawAccelAz);
+
+        M5.Lcd.setCursor(4, 148);
+        M5.Lcd.printf("gyro=%+.1f  offset=%.1f", (double)gyroRate, (double)PITCH_MOUNT_OFFSET);
+
+        M5.Lcd.setCursor(4, 166);
+        uint16_t stColor = (stableCount >= STABLE_HOLD_COUNT) ? GREEN : YELLOW;
+        M5.Lcd.setTextColor(stColor, BLACK);
+        M5.Lcd.printf("stable=%d/%d  %s",
+                       stableCount, STABLE_HOLD_COUNT,
+                       (stableCount >= STABLE_HOLD_COUNT) ? "** READY **" : "");
+        return;
+    }
+
+    // --- 平衡/倒地模式: 简洁运行视图 ---
     int barY = 30, barH = 40;
     M5.Lcd.fillRect(0, barY, screenW, barH + 30, BLACK);
 
@@ -60,19 +100,10 @@ void updateDisplay() {
     M5.Lcd.printf("Status: %s", fallen ? "FALLEN" : "BALANCING");
 
     M5.Lcd.setCursor(4, infoY + 42);
-    M5.Lcd.setTextColor(MAGENTA);
-    M5.Lcd.printf("Phone: X=%+.0f Y=%+.0f", phoneX, phoneY);
-
-    M5.Lcd.setCursor(4, infoY + 56);
     M5.Lcd.setTextColor(CYAN);
     M5.Lcd.printf("RPM R=%d L=%d  Act %.0f %.0f", cmdSpdR, cmdSpdL, (double)actualSpeedR, (double)actualSpeedL);
 
-    M5.Lcd.setCursor(4, infoY + 70);
+    M5.Lcd.setCursor(4, infoY + 56);
     M5.Lcd.setTextColor(YELLOW);
-    M5.Lcd.printf("I=%.0f/%.0fmA  %.0fmm/s %.0fmm", (double)actualCurrentR, (double)actualCurrentL, (double)linearSpeed, (double)distanceMM);
-
-    M5.Lcd.setCursor(4, infoY + 84);
-    uint16_t tColor = (motorTempR > 45 || motorTempL > 45) ? RED : WHITE;
-    M5.Lcd.setTextColor(tColor);
-    M5.Lcd.printf("Temp R=%.0f L=%.0f C", (double)motorTempR, (double)motorTempL);
+    M5.Lcd.printf("I=%.0f/%.0fmA  %.0fmm/s", (double)actualCurrentR, (double)actualCurrentL, (double)linearSpeed);
 }

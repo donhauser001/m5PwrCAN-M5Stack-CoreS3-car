@@ -27,13 +27,14 @@ float gyroRate     = 0;
 float targetAngle  = 0;
 float targetAngleFilt = 0;
 
-// 校准
-float gyroOffset[3] = {0, 0, 0};
-float pitchOffset   = 0;
+// 调试: 原始 Pitch (供前后摆动时观察)
+float rawAccelPitchDeg = 0;
+float rawAccelAy = 0, rawAccelAz = 0;
 
 // 控制状态
 bool fallen = false;
 bool diagMode = true;  // 开机默认诊断模式
+int  stableCount = 0;
 
 // 手机输入
 float phoneX = 0;
@@ -50,6 +51,8 @@ int32_t encoderR = 0, encoderL = 0;
 float motorTempR = 0, motorTempL = 0;
 float linearSpeed = 0;
 float distanceMM = 0;
+
+uint32_t canTxFailCount = 0;
 
 // 显示
 int screenW = 0, screenH = 0;

@@ -14,6 +14,8 @@ static const int READ_TIMEOUT_MS = 15;
 static const uint8_t FEEDBACK_CMD = 0x02;
 static void parseFeedback(const twai_message_t *rx);
 static int gMotorMode = MODE_SPEED;
+static unsigned long lastFeedbackMsR = 0, lastFeedbackMsL = 0;
+static const unsigned long FEEDBACK_STALE_MS = 20;
 
 // ============ CAN 底层 ============
 static bool canSend(uint8_t id, uint8_t cmd, uint16_t opt, uint8_t *d, int txTimeoutMs = 5) {
@@ -70,7 +72,6 @@ void canInit() {
   twai_start();
   delay(500);
   flushCAN();
-  Serial.println("CAN OK.");
 }
 
 // ============ 参数读写 ============
@@ -157,18 +158,21 @@ static void parseFeedback(const twai_message_t *rx) {
   if (vol < 0 || vol > 3000)
     return;
 
+  unsigned long nowMs = millis();
   if (motorId == MOTOR_R) {
     actualSpeedR = (float)spd;
     actualSpdR = spd;
     actualPosR = (float)pos;
     actualCurrentR = (float)cur;
     vinR = (float)vol;
+    lastFeedbackMsR = nowMs;
   } else if (motorId == MOTOR_L) {
     actualSpeedL = (float)spd;
     actualSpdL = spd;
     actualPosL = (float)pos;
     actualCurrentL = (float)cur;
     vinL = (float)vol;
+    lastFeedbackMsL = nowMs;
   }
 }
 
@@ -216,7 +220,9 @@ void setMotorCurrent(uint8_t id, int32_t mA) {
   d[5] = (val >> 8) & 0xFF;
   d[6] = (val >> 16) & 0xFF;
   d[7] = (val >> 24) & 0xFF;
-  canSend(id, CMD_WRITE, 0, d, 0);
+  // 1ms 超时: 仍远快于 5ms 控制周期, 给 TX 队列排空一点时间, 减少静默丢帧
+  if (!canSend(id, CMD_WRITE, 0, d, 1))
+    canTxFailCount++;
 }
 
 void setMotorPosition(uint8_t id, int32_t deg_x100) {
@@ -232,7 +238,6 @@ void setMotorPosition(uint8_t id, int32_t deg_x100) {
 
 void setMotorModeAll(int mode) {
   if (mode != MODE_SPEED && mode != MODE_CURRENT && mode != MODE_POSITION) {
-    Serial.printf("Invalid motor mode: %d\n", mode);
     return;
   }
   uint8_t ids[] = {MOTOR_R, MOTOR_L};
@@ -241,9 +246,6 @@ void setMotorModeAll(int mode) {
     delay(20);
   }
   gMotorMode = mode;
-  Serial.printf("Motor mode set: %d (%s)\n", mode,
-                mode == MODE_SPEED ? "SPEED" :
-                mode == MODE_CURRENT ? "CURRENT" : "POSITION");
 }
 
 void setMotorSpeedLoopGains(int32_t kp_reg, int32_t ki_reg, int32_t kd_reg) {
@@ -256,8 +258,6 @@ void setMotorSpeedLoopGains(int32_t kp_reg, int32_t ki_reg, int32_t kd_reg) {
     writeParam(ids[i], REG_SPEED_KD, kd_reg);
     delay(20);
   }
-  Serial.printf("Motor speed loop gains set: KP=%ld KI=%ld KD=%ld\n",
-                (long)kp_reg, (long)ki_reg, (long)kd_reg);
 }
 
 void setMotorSpeedCurrentLimit(int32_t mA) {
@@ -266,7 +266,6 @@ void setMotorSpeedCurrentLimit(int32_t mA) {
     writeParam(ids[i], REG_SPEED_MAX_CUR, mA * 100);
     delay(20);
   }
-  Serial.printf("Motor speed current limit set: %ld mA\n", (long)mA);
 }
 
 int getMotorMode() {
@@ -297,8 +296,19 @@ void driveMotors(int outR, int outL) {
   // 集中处理反馈 (非阻塞)
   processAllFeedback();
 
-  // 更新线速度 (mm/s)
-  linearSpeed = ((float)actualSpeedR + (float)actualSpeedL) * 0.5f *
+  // 反馈新鲜度: 若某电机超过 20ms 未更新, 用另一侧镜像避免 yaw 误算导致 L/R 分裂
+  unsigned long nowMs = millis();
+  if (lastFeedbackMsR > 0 && (nowMs - lastFeedbackMsR) > FEEDBACK_STALE_MS) {
+    actualSpeedR = actualSpeedL;
+    actualSpdR = actualSpdL;
+  }
+  if (lastFeedbackMsL > 0 && (nowMs - lastFeedbackMsL) > FEEDBACK_STALE_MS) {
+    actualSpeedL = actualSpeedR;
+    actualSpdL = actualSpdR;
+  }
+
+  // 更新线速度 (mm/s): DIR_L=-1 → 左轮正转报告负RPM, 用差值才是平移速度
+  linearSpeed = ((float)actualSpeedR - (float)actualSpeedL) * 0.5f *
                 (float)WHEEL_CIRCUMFERENCE_MM / 60.0f;
 }
 
@@ -320,17 +330,13 @@ void stopMotors() {
   flushCAN();
 }
 
-// ============ 扫描 + 初始化电机 (速度模式) ============
+// ============ 扫描 + 初始化电机 ============
 bool motorsInit() {
   int32_t vr = readParam(MOTOR_R, REG_VIN);
   bool rOk = (vr != -99999 && vr > 0);
   int32_t vl = readParam(MOTOR_L, REG_VIN);
   bool lOk = (vl != -99999 && vl > 0);
 
-  Serial.printf("Motor R (0x%02X): %s (Vin=%.1fV)\n", MOTOR_R,
-                rOk ? "OK" : "FAIL", vr / 100.0f);
-  Serial.printf("Motor L (0x%02X): %s (Vin=%.1fV)\n", MOTOR_L,
-                lOk ? "OK" : "FAIL", vl / 100.0f);
 
   if (rOk)
     vinR = vr / 100.0f;
@@ -347,23 +353,18 @@ bool motorsInit() {
     delay(20);
   }
 
-  // 步骤2: 配置模式/电流限制 (不修改电机内部速度环增益，保留出厂默认值)
-  // 注意: setMotorSpeedLoopGains() 会覆盖电机 NVM 中的速度环 KP/KI/KD，
-  //       如果写入值与出厂值不同，电机内部积分在 0RPM 时会发生漂移振荡 (表现: 两轮来回乱转)。
-  //       除非明确需要调整内环，否则不要调用此函数。
-  setMotorModeAll(MODE_SPEED);
-  setMotorSpeedCurrentLimit((int32_t)SPEED_MAX_CURRENT);
+  // 步骤2: 配置为电流(力矩)模式 — 消除电机内部速度环PID延迟,
+  //         让平衡控制器直接控制力矩, 响应时间从50-100ms降至<1ms.
+  setMotorModeAll(MODE_CURRENT);
 
-  // 步骤3: 确认设定点为 0，再开启输出
+  // 步骤3: 确认电流设定点为 0，再开启输出
   for (int i = 0; i < 2; i++) {
-    setMotorSpeedReliable(ids[i], 0); // 开启前再次确认 0
+    setMotorCurrent(ids[i], 0);    // 电流模式: 清零力矩指令
     delay(10);
     setMotorOutput(ids[i], true);  // CMD_ON: 此时设定点已为 0，不会起转
     delay(20);
   }
   stopMotors();
-  Serial.printf("Motors ready: mode=SPEED, curLimit=%dmA (inner speed loop: factory default)\n",
-                SPEED_MAX_CURRENT);
 
   return rOk && lOk;
 }

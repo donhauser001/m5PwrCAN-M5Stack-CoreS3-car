@@ -28,7 +28,7 @@ void handleWebTextCommand(const String &cmd) {
     sscanf(cmd.c_str() + 2, "%d,%d", &jx, &jy);
     phoneX = jx;
     phoneY = jy;
-    targetAngle = phoneY * 4.0f / 100.0f;
+    targetAngle = phoneY * MOVE_ANGLE_GAIN;
     return;
   }
 
@@ -41,7 +41,6 @@ void handleWebTextCommand(const String &cmd) {
     Ki = ni;
     Kd = nd;
     pidIntegral = 0;
-    Serial.printf("PID: Kp=%.1f Ki=%.1f Kd=%.2f\n", Kp, Ki, Kd);
     return;
   }
 
@@ -80,7 +79,6 @@ void handleWebTextCommand(const String &cmd) {
   if (cmd == "R") {
     setBenchStepTest(false);
     stopMotors();
-    calibrateIMU();
     diagMode = true;
     fallen = false;
     drawMainUI();
@@ -89,11 +87,15 @@ void handleWebTextCommand(const String &cmd) {
 
   if (cmd == "S") {
     setBenchStepTest(false);
-    if (getMotorMode() != MODE_SPEED) {
-      Serial.println("Switching motor mode to SPEED for balance.");
-      setMotorModeAll(MODE_SPEED);
+    if (getMotorMode() != MODE_CURRENT) {
+      setMotorModeAll(MODE_CURRENT);
     }
-    activateBalance();  // 内部做三重条件检查，失败时串口打印原因
+    if (fallen) {
+      diagMode = true;
+      fallen   = false;
+      stableCount = STABLE_HOLD_COUNT;
+    }
+    activateBalance();
     return;
   }
 
@@ -131,14 +133,14 @@ void buildWebTelemetryMessage(char *msg, size_t size) {
   float controlPitch = currentPitch + PITCH_MOUNT_OFFSET;
   unsigned long nowMs = millis();
 
-  // T,ms,pitch,target,gyro,pid,cmdR,cmdL,actR,actL,speed(m/s),dist(m),vinR,vinL,curR,curL,tmpR,tmpL,fallen,diag,ctrlDt,pidRaw,pidClamp,dz,sentR,sentL,benchMode
+  // T,...,benchMode,canTxFailCount
   snprintf(msg, size,
-           "T,%lu,%.2f,%.2f,%.2f,%.1f,%d,%d,%d,%d,%.3f,%.4f,%.2f,%.2f,%.1f,%.1f,%.1f,%.1f,%d,%d,%.2f,%.1f,%.1f,%.0f,%d,%d,%d",
+           "T,%lu,%.2f,%.2f,%.2f,%.1f,%d,%d,%d,%d,%.3f,%.4f,%.2f,%.2f,%.1f,%.1f,%.1f,%.1f,%d,%d,%.2f,%.1f,%.1f,%.0f,%d,%d,%d,%lu",
            nowMs, controlPitch, targetAngleFilt, gyroRate, pidOutput, cmdSpdR, cmdSpdL,
            actualSpdR, actualSpdL, linearSpeed / 1000.0f, distanceMM / 1000.0f,
            vinR, vinL, actualCurrentR, actualCurrentL, motorTempR, motorTempL,
            fallen ? 1 : 0, diagMode ? 1 : 0,
-           ctrlDtMs, dbgPidRaw, dbgPidClamped, dbgAfterDeadzone, dbgSentR, dbgSentL, benchMode ? 1 : 0);
+           ctrlDtMs, dbgPidRaw, dbgPidClamped, dbgAfterDeadzone, dbgSentR, dbgSentL, benchMode ? 1 : 0, canTxFailCount);
 }
 
 void buildWebMotorMessage(char *msg, size_t size) {

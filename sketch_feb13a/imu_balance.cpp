@@ -14,16 +14,19 @@
 #include "can_motor.h"
 #include <M5Unified.h>
 
-static unsigned long lastDebugMs   = 0;
 static float         filteredGyro  = 0;
+static float         filteredLinSpeed = 0;
 
-// ---- 稳定计数 (diagMode 下统计连续满足启动条件的控制周期数) ----
-static int           stableCount   = 0;
+// ---- 稳定计数 (diagMode 下统计连续满足启动条件的控制周期数, stableCount 已在 globals) ----
 static int           fallConfirmCount = 0;
 
 // ---- 软启动状态 ----
 static bool          softStartActive = false;
 static unsigned long softStartMs     = 0;
+
+// ---- 启动保护期: 从极限角度启动时暂时抑制跌倒检测 ----
+static bool          startupGraceActive = false;
+static unsigned long startupGraceMs     = 0;
 
 // ---- 架空轮阶跃实验状态 ----
 static unsigned long benchLastStepMs = 0;
@@ -31,6 +34,10 @@ static int           benchCmdRpm     = 0;
 static int           benchStartRpm   = -1;
 static int           lastCmdRpmR     = 0;
 static int           lastCmdRpmL     = 0;
+
+// ---- 移动控制输入平滑 ----
+static float smoothPhoneX = 0;
+static float smoothPhoneY = 0;
 
 static void clearControlOutputState() {
     pidOutput = 0;
@@ -74,16 +81,9 @@ static void runBenchStepTest() {
         benchLastStepMs = now;
         benchCmdRpm++;
         if (benchCmdRpm > 30) {
-            Serial.println("[BENCH] sweep complete. stopping test.");
-            if (benchStartRpm > 0) {
-                Serial.printf("[BENCH] first moving step ~= %d RPM\n", benchStartRpm);
-            } else {
-                Serial.println("[BENCH] no motion detected up to 30 RPM");
-            }
             stopBenchStepInternal();
             return;
         }
-        Serial.printf("[BENCH] step cmd=%d RPM\n", benchCmdRpm);
     }
 
     cmdSpdR = benchCmdRpm;
@@ -99,83 +99,26 @@ static void runBenchStepTest() {
     float rpmAbs = (fabs(actualSpeedR) + fabs(actualSpeedL)) * 0.5f;
     if (benchStartRpm < 0 && benchCmdRpm > 0 && rpmAbs > 3.0f) {
         benchStartRpm = benchCmdRpm;
-        Serial.printf("[BENCH] motion threshold detected at cmd=%d RPM (act=%.1f RPM)\n",
-                      benchStartRpm, rpmAbs);
     }
 }
 
-// ============ IMU 校准 ============
-void calibrateIMU() {
-    Serial.println("Calibrating IMU (6-axis)... hold upright!");
-    M5.Lcd.fillScreen(BLACK);
-    M5.Lcd.setTextSize(2);
-    M5.Lcd.setTextColor(YELLOW);
-    M5.Lcd.setCursor(10, screenH / 2 - 10);
-    M5.Lcd.println("Calibrating...");
-    M5.Lcd.println("Hold at balance!");
-
-    float gxSum = 0, gySum = 0, gzSum = 0;
-    float axSum = 0, aySum = 0, azSum = 0;
-    int cnt = 0;
-
-    for (int i = 0; i < 500; i++) {
-        M5.Imu.update();
-        auto d = M5.Imu.getImuData();
-        gxSum += d.gyro.x;
-        gySum += d.gyro.y;
-        gzSum += d.gyro.z;
-        axSum += d.accel.x;
-        aySum += d.accel.y;
-        azSum += d.accel.z;
-        cnt++;
-        delay(4);
-    }
-
-    // 3轴陀螺仪零偏
-    gyroOffset[0] = gxSum / cnt;
-    gyroOffset[1] = gySum / cnt;
-    gyroOffset[2] = gzSum / cnt;
-
-    // 加速计计算平衡点倾角
-    float avgAy = aySum / cnt;
-    float avgAz = azSum / cnt;
-    pitchOffset = atan2f(avgAz, avgAy) * RAD_TO_DEG;
-
-    // 重置状态
-    currentPitch    = 0;
-    filteredGyro    = 0;
-    pidIntegral     = 0;
-    lastError       = 0;
-    fallen          = false;
-    targetAngleFilt = 0;
-    stableCount     = 0;
-    fallConfirmCount = 0;
-    softStartActive = false;
-
-    Serial.println("======== Calibration Result ========");
-    Serial.printf("gyroOff: [%.2f, %.2f, %.2f] dps\n",
-                  gyroOffset[0], gyroOffset[1], gyroOffset[2]);
-    Serial.printf("pitchOff: %.1f deg\n", pitchOffset);
-    Serial.printf("accel avg: [%.3f, %.3f, %.3f] g\n",
-                  axSum / cnt, avgAy, avgAz);
-    Serial.printf("BALANCE_DIR: %d\n", BALANCE_DIR);
-    Serial.println("====================================");
-}
-
-// ============ 姿态更新 (互补滤波) ============
+// ============ 姿态更新 (互补滤波, 无需校准) ============
 void updateIMU(float dt) {
     M5.Imu.update();
     auto d = M5.Imu.getImuData();
 
-    // 加速计倾角 (减去校准偏移)
-    float accelAngle = atan2f(d.accel.z, d.accel.y) * RAD_TO_DEG - pitchOffset;
+    // 原始加速度 Pitch (调试/屏幕显示)
+    rawAccelPitchDeg = atan2f(d.accel.z, d.accel.y) * RAD_TO_DEG;
+    rawAccelAy = d.accel.y;
+    rawAccelAz = d.accel.z;
+    // 加速计倾角 = 原始角度 (不做校准偏移, 由 PITCH_MOUNT_OFFSET 在 controlPitch 里补偿)
+    float accelAngle = rawAccelPitchDeg;
 
-    // 陀螺仪角速度 (减去零偏), pitch 轴 = gyro.x
-    // 注意: BMI270 在 CoreS3 上 gyro.x 符号与 atan2(az,ay) 定义的 pitch 方向相反,
-    //       必须取反才能让互补滤波和 D 项正确工作!
-    float rawGyroX = -(d.gyro.x - gyroOffset[0]);
-    float rawGyroY = d.gyro.y - gyroOffset[1];
-    float rawGyroZ = d.gyro.z - gyroOffset[2];
+    // 陀螺仪角速度 (直接使用, 不减零偏 — BMI270 静态零偏极小)
+    // 注意: gyro.x 符号与 atan2(az,ay) 定义的 pitch 方向相反, 必须取反
+    float rawGyroX = -d.gyro.x;
+    float rawGyroY = d.gyro.y;
+    float rawGyroZ = d.gyro.z;
 
     // 互补滤波 → pitch 角度 (前后)
     currentPitch = COMP_ALPHA * (currentPitch + rawGyroX * dt)
@@ -206,10 +149,10 @@ void balanceControl(float dt) {
         return;
     }
 
-    // --- 诊断模式: 等待用户手扶静止后按 Stand ---
+    // --- 诊断模式: 静止在允许角度内即可 READY，按 Stand 直接自立 ---
     if (diagMode) {
         clearControlOutputState();
-        bool angleOk = fabs(controlPitch) < START_ANGLE;
+        bool angleOk = fabs(controlPitch) < STANDUP_MAX_ANGLE;
         bool gyroOk  = fabs(gyroRate) < GYRO_START_THRESHOLD;
         if (angleOk && gyroOk) {
             stableCount++;
@@ -217,18 +160,6 @@ void balanceControl(float dt) {
             stableCount = 0;
         }
 
-        unsigned long now = millis();
-        if (now - lastDebugMs > 150) {
-            lastDebugMs = now;
-            Serial.printf("[DIAG] pitch=%+6.1f  gyro=%+7.1f  stable=%d/%d",
-                          controlPitch, gyroRate, stableCount, STABLE_HOLD_COUNT);
-            if (stableCount >= STABLE_HOLD_COUNT) {
-                Serial.print("  ** READY **");
-            } else if (angleOk) {
-                Serial.print("  (hold still)");
-            }
-            Serial.println();
-        }
         stopMotors();
         return;
     }
@@ -239,17 +170,28 @@ void balanceControl(float dt) {
         return;
     }
 
-    if (fabs(controlPitch) > FALL_ANGLE) {
+    // ---- 启动保护期管理: 角度回到安全区 或 超时后结束 ----
+    if (startupGraceActive) {
+        if (fabs(controlPitch) < FALL_ANGLE) {
+            startupGraceActive = false;
+        } else if ((millis() - startupGraceMs) >= STANDUP_GRACE_MS) {
+            startupGraceActive = false;
+        }
+    }
+
+    if (!startupGraceActive && fabs(controlPitch) > FALL_ANGLE) {
         fallConfirmCount++;
         if (fallConfirmCount >= FALL_CONFIRM_COUNT) {
             stopMotors();
             fallen           = true;
             softStartActive  = false;
+            startupGraceActive = false;
             stableCount      = 0;
             fallConfirmCount = 0;
             pidIntegral      = 0;
+            smoothPhoneX     = 0;
+            smoothPhoneY     = 0;
             clearControlOutputState();
-            Serial.printf("FALLEN! pitch=%.1f\n", controlPitch);
             return;
         }
     } else {
@@ -262,7 +204,11 @@ void balanceControl(float dt) {
 
     // ---- 角度 PID (内环: 输出 RPM) ----
     float error = controlPitch - targetAngleFilt;
-    pidIntegral += error * dt;
+    if (fabs(error) < INTEGRAL_DECAY_THRESHOLD) {
+        pidIntegral += error * dt;
+    } else {
+        pidIntegral *= INTEGRAL_DECAY_RATE;  // 大误差时快速衰减积分, 让 P+D 主导恢复
+    }
     pidIntegral = constrain(pidIntegral, -INTEGRAL_LIMIT, INTEGRAL_LIMIT);
 
     float pTerm = Kp * error;
@@ -270,7 +216,11 @@ void balanceControl(float dt) {
     float dTerm = constrain(Kd * filteredGyro, -D_LIMIT, D_LIMIT);
 
     float rawOutput = (pTerm + iTerm + dTerm) * BALANCE_DIR;
-    rawOutput -= linearSpeed * VELOCITY_K;
+    filteredLinSpeed = VELOCITY_LPF_ALPHA * filteredLinSpeed
+                     + (1.0f - VELOCITY_LPF_ALPHA) * linearSpeed;
+    float velCorr = constrain(filteredLinSpeed * VELOCITY_K,
+                              -VELOCITY_CORR_LIMIT, VELOCITY_CORR_LIMIT);
+    rawOutput -= velCorr;
     dbgPidRaw = rawOutput;
     float clampedOutput = constrain(rawOutput, -(float)OUTPUT_LIMIT, (float)OUTPUT_LIMIT);
     dbgPidClamped = clampedOutput;
@@ -292,20 +242,21 @@ void balanceControl(float dt) {
         // 超温 20°C 时降到 30%，线性插值
         float throttle = constrain(1.0f - (tempMax - TEMP_THROTTLE_DEG) / 20.0f, 0.3f, 1.0f);
         pidOutput *= throttle;
-        static unsigned long lastTempWarnMs = 0;
-        if (millis() - lastTempWarnMs > 2000) {
-            lastTempWarnMs = millis();
-            Serial.printf("TEMP THROTTLE! max=%.0f°C throttle=%.0f%%\n", tempMax, throttle * 100);
-        }
     }
 
-    // ---- 转向 (手机 X 输入) ----
-    float steer = phoneX * 5.0f;
+    // ---- 偏航修正: 轮速和 = 旋转分量, 反馈抑制原地自旋 ----
+    float yawRate = ((float)actualSpeedR + (float)actualSpeedL) * 0.5f;
+    float yawCorr = yawRate * YAW_K;
+
+    // ---- 移动输入平滑 + 转向 (手机 X 输入, 增益 0.15 → max +-15 RPM) ----
+    smoothPhoneY = MOVE_INPUT_LPF * smoothPhoneY + (1.0f - MOVE_INPUT_LPF) * phoneY;
+    smoothPhoneX = STEER_INPUT_LPF * smoothPhoneX + (1.0f - STEER_INPUT_LPF) * phoneX;
+    float steer = smoothPhoneX * STEER_GAIN;
     int baseOut = constrain((int)pidOutput, -OUTPUT_LIMIT, OUTPUT_LIMIT);
     dbgAfterDeadzone = (float)baseOut;
 
-    int targetR = constrain((int)(pidOutput + steer), -OUTPUT_LIMIT, OUTPUT_LIMIT);
-    int targetL = constrain((int)(pidOutput - steer), -OUTPUT_LIMIT, OUTPUT_LIMIT);
+    int targetR = constrain((int)(pidOutput + steer - yawCorr), -OUTPUT_LIMIT, OUTPUT_LIMIT);
+    int targetL = constrain((int)(pidOutput - steer + yawCorr), -OUTPUT_LIMIT, OUTPUT_LIMIT);
     int slewR = applySlewLimit(targetR, lastCmdRpmR);
     int slewL = applySlewLimit(targetL, lastCmdRpmL);
     lastCmdRpmR = slewR;
@@ -322,26 +273,16 @@ void balanceControl(float dt) {
 
     distanceMM += linearSpeed * dt;
 
-    // 串口调试 (每100ms)
-    unsigned long now = millis();
-    if (now - lastDebugMs > 100) {
-        lastDebugMs = now;
-        Serial.printf("dt=%5.1fms raw=%+6.1f clamp=%+6.1f dz=%+5.0f sent=%+4d/%+4d act=%+4d/%+4d cur=%+5.0f/%+5.0f pitch=%+5.2f gyro=%+7.1f\n",
-                      (double)ctrlDtMs, (double)dbgPidRaw, (double)dbgPidClamped, (double)dbgAfterDeadzone,
-                      dbgSentR, dbgSentL, actualSpdR, actualSpdL, (double)actualCurrentR, (double)actualCurrentL,
-                      (double)controlPitch, (double)gyroRate);
-    }
 }
 
 // ============ 安全启动: 角度 + 角速度 + 连续稳定窗口三重门限 ============
 bool activateBalance() {
     if (benchMode) {
-        Serial.println(">>> BENCH MODE active, stop bench first (B,0) <<<");
         return false;
     }
 
     float controlPitch = currentPitch + PITCH_MOUNT_OFFSET;
-    bool angleOk  = fabs(controlPitch) < START_ANGLE;
+    bool angleOk  = fabs(controlPitch) < STANDUP_MAX_ANGLE;
     bool gyroOk   = fabs(gyroRate)     < GYRO_START_THRESHOLD;
     bool stableOk = (stableCount >= STABLE_HOLD_COUNT);
 
@@ -350,8 +291,11 @@ bool activateBalance() {
         fallen          = false;
         phoneX          = 0;
         phoneY          = 0;
+        smoothPhoneX    = 0;
+        smoothPhoneY    = 0;
         pidIntegral     = 0;
         lastError       = 0;
+        filteredLinSpeed = 0;
         fallConfirmCount = 0;
         targetAngle     = 0;
         targetAngleFilt = 0;
@@ -359,16 +303,16 @@ bool activateBalance() {
         softStartMs     = millis();
         stableCount     = 0;
         clearControlOutputState();
-        Serial.printf(">>> BALANCE ON  pitch=%.1f° gyro=%.1f°/s  soft-start %dms <<<\n",
-                      controlPitch, gyroRate, SOFT_START_MS);
+        // 从极限角度启动时, 初始角度可能已超 FALL_ANGLE, 开启保护期
+        if (fabs(controlPitch) >= FALL_ANGLE) {
+            startupGraceActive = true;
+            startupGraceMs     = millis();
+        } else {
+            startupGraceActive = false;
+        }
         return true;
     }
 
-    // 条件不满足: 打印原因
-    Serial.printf(">>> NOT READY:  pitch=%.1f°(<%.0f) %s  gyro=%.1f°/s(<%.0f) %s  stable=%d/%d %s\n",
-                  controlPitch, START_ANGLE,      angleOk  ? "OK" : "FAIL",
-                  fabs(gyroRate), GYRO_START_THRESHOLD, gyroOk   ? "OK" : "FAIL",
-                  stableCount, STABLE_HOLD_COUNT,       stableOk ? "OK" : "FAIL");
     return false;
 }
 
@@ -384,12 +328,9 @@ void setBenchStepTest(bool on) {
         benchStartRpm = -1;
         benchLastStepMs = millis();
         pidOutput = 0;
-        Serial.println("[BENCH] step test ON. Lift wheels before running.");
-        Serial.println("[BENCH] command sweep: 0..30 RPM, step every 700ms.");
         driveMotors(0, 0);
         return;
     }
 
-    Serial.println("[BENCH] step test OFF.");
     stopBenchStepInternal();
 }

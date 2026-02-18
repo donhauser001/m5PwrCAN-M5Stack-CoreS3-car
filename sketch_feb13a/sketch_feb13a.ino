@@ -30,7 +30,6 @@ static unsigned long lastMotorPollMs = 0;
 void setup() {
     auto cfg = M5.config();
     M5.begin(cfg);
-    Serial.begin(115200);
     delay(300);
 
     // 屏幕
@@ -43,17 +42,10 @@ void setup() {
     M5.Lcd.setCursor(10, 10);
     M5.Lcd.println("Balance Bot CAN");
 
-    Serial.println("\n========================================");
-    Serial.println("  Balance Bot — CAN + IMU + WiFi");
-    Serial.println("  R=0xA8  L=0xA9  TX=G17 RX=G18");
-    Serial.printf("  BALANCE_DIR = %d\n", BALANCE_DIR);
-    Serial.println("========================================\n");
-
     // IMU
     if (!M5.Imu.isEnabled()) {
-        Serial.println("WARNING: IMU not found!");
-    } else {
-        Serial.println("IMU OK.");
+        M5.Lcd.setTextColor(RED);
+        M5.Lcd.println("IMU not found!");
     }
 
     // CAN
@@ -65,8 +57,6 @@ void setup() {
     bool ok = motorsInit();
     M5.Lcd.printf("Motors: %s\n", ok ? "ALL OK" : "PARTIAL");
 
-    // IMU 校准
-    calibrateIMU();
 
     // WiFi + Web
     webInit();
@@ -78,12 +68,6 @@ void setup() {
     // 进入诊断模式 (不驱动电机, 等待用户扶直)
     diagMode = true;
 
-    Serial.println("╔══════════════════════════════════════╗");
-    Serial.println("║  请手扶机器人竖直, 等 READY 出现     ║");
-    Serial.println("║  然后按手机 Stand 按钮启动平衡       ║");
-    Serial.println("╚══════════════════════════════════════╝");
-    Serial.printf("PID: Kp=%.1f Ki=%.1f Kd=%.2f  DIR=%d\n", Kp, Ki, Kd, BALANCE_DIR);
-    Serial.printf("MODE=SPEED  LIMIT=%dRPM  START_ANGLE=%.0f  Wheel=%dmm\n\n", OUTPUT_LIMIT, START_ANGLE, WHEEL_DIAMETER_MM);
 }
 
 // ============ Loop ============
@@ -122,26 +106,22 @@ void loop() {
         lastCtrlUs = nowUs;
     }
 
-    // --- 触屏: 左=Kp-, 右=Kp+, 中=校准/站立 ---
+    // --- 触屏: 左=Kp-, 右=Kp+, 中=站立 ---
     auto tc = M5.Touch.getDetail();
     if (tc.wasPressed()) {
-        float controlPitch = currentPitch + PITCH_MOUNT_OFFSET;
         int third = screenW / 3;
         if (tc.x < third) {
             Kp = max(0.0f, Kp - 1.0f);
         } else if (tc.x > third * 2) {
             Kp = min(40.0f, Kp + 1.0f);
         } else {
-            if (diagMode || fallen) {
-                // 统一走安全启动路径 (角度 + 角速度 + 连续稳定窗口)
-                if (!activateBalance()) {
-                    // 条件不满足时确保退到诊断模式，串口已打印原因
-                    diagMode = true;
-                    fallen   = false;
-                }
-            } else {
-                calibrateIMU();
-                drawMainUI();
+            if (fallen) {
+                diagMode = true;
+                fallen   = false;
+                stableCount = STABLE_HOLD_COUNT;
+            }
+            if (diagMode) {
+                activateBalance();
             }
         }
     }

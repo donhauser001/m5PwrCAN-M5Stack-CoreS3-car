@@ -27,13 +27,15 @@ extern float gyroRate;        // pitch 轴角速度 (PID 微分项)
 extern float targetAngle;     // 目标倾角 (手机控制)
 extern float targetAngleFilt; // 控制实际使用的目标倾角 (低通后)
 
-// 校准偏移
-extern float gyroOffset[3];   // 陀螺仪零偏 [x,y,z]
-extern float pitchOffset;     // 平衡点 pitch 偏移
+// 调试: 原始加速度 Pitch (atan2(az,ay) 度)
+extern float rawAccelPitchDeg;
+extern float rawAccelAy;      // 原始 ay (g)
+extern float rawAccelAz;      // 原始 az (g)
 
 // ============ 控制状态 ============
 extern bool fallen;
 extern bool diagMode;          // 诊断模式 (只打印不驱动)
+extern int  stableCount;       // 连续稳定计数 (显示用)
 
 // ============ 手机输入 ============
 extern float phoneX;
@@ -50,6 +52,9 @@ extern int32_t encoderR, encoderL;         // 编码器累计值
 extern float motorTempR, motorTempL;       // 电机温度 °C
 extern float linearSpeed;                  // 线速度 mm/s (双轮平均)
 extern float distanceMM;                  // 累计行驶距离 mm
+
+// ============ CAN 诊断 ============
+extern uint32_t canTxFailCount;  // CAN 发送失败计数 (控制环内 setMotorCurrent 丢帧)
 
 // ============ 显示 ============
 extern int screenW, screenH;

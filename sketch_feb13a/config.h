@@ -35,7 +35,7 @@
 #define REG_TEMP            0x7035  // 芯片温度 °C
 
 // ============ 车轮物理参数 ============
-#define ROBOT_WEIGHT_G         830  // 机器人总重量 (g)
+#define ROBOT_WEIGHT_G         838  // 机器人总重量 (g)，含前后支架
 #define WHEEL_DIAMETER_MM      85
 #define WHEEL_CIRCUMFERENCE_MM 267  // π*85 ≈ 267
 #define ENCODER_COUNTS_PER_REV 36000
@@ -54,8 +54,10 @@
 #define MOTOR_SPEED_LOOP_KI  500000   // 0.05
 #define MOTOR_SPEED_LOOP_KD  5000     // 0.05
 // 电流模式下, 平衡输出(RPM)到电流命令(mA)的线性映射
-#define CURRENT_MODE_GAIN_MA_PER_RPM 35.0f
-#define CURRENT_MODE_LIMIT_MA        1800
+// 物理推算: 0.84kg机器人(含支架)、CoG≈60mm、电机扭矩常数≈0.065Nm/A → 约66mA/deg/motor
+// Kp=6 RPM/deg → 需 GAIN≥11 才能在P项单独抵抗重力; 取10, D项补齐差额
+#define CURRENT_MODE_GAIN_MA_PER_RPM 10.0f
+#define CURRENT_MODE_LIMIT_MA        1000   // 短时可承受1A, 连续500mA; 平衡时脉冲式使用
 // FOC 电机内部已处理低速/静摩擦，外部不再需要死区和限速
 #define OUTPUT_DEADBAND_RPM       0   // 死区关闭: 任何 PID 输出都应立即传递给电机
 #define MIN_EFFECTIVE_RPM         0   // 最小有效转速关闭: 不再跳变
@@ -67,32 +69,48 @@
 
 // ============ PID 默认参数 (速度模式: 输出单位 RPM) ============
 #define DEFAULT_KP   6.0f    // RPM/degree
-#define DEFAULT_KI   0.0f    // 先关闭, 稳定后可加
+#define DEFAULT_KI   0.5f    // 消除稳态角度偏差; 0→0.5, 防止因重心偏移导致持续漂移
 #define DEFAULT_KD   1.2f    // RPM/(deg/s) (从1.0微调+20%, 压制缓慢发散的振荡)
-#define INTEGRAL_LIMIT 80.0f  // 积分限幅 (RPM·s)
-#define D_LIMIT        150.0f // D 项最大贡献 (RPM, 上次120在gyro≈130°/s时被裁剪, 提高到150避免峰值削波)
+#define INTEGRAL_LIMIT 20.0f  // 积分限幅 (deg·s); Ki*limit=10RPM封顶, 防止过冲
+#define INTEGRAL_DECAY_THRESHOLD 2.0f  // |error|>此值时积分开始衰减, 大扰动时让P+D主导
+#define INTEGRAL_DECAY_RATE      0.95f // 大误差时每周期积分乘以此值(快速衰减)
+#define D_LIMIT        200.0f // D 项最大贡献 (RPM), 给D项更多空间抑制大振荡
 
-// ============ 速度补偿 (真实编码器速度防漂移) ============
-// 线速度 mm/s → 扣减 RPM 的增益
-#define VELOCITY_K   0.00f   // 先关闭, 避免速度噪声耦合
+// ============ 速度补偿 (防漂移) ============
+#define VELOCITY_K           0.05f   // 线速度→RPM增益
+#define VELOCITY_CORR_LIMIT  5.0f    // 速度修正最大贡献(RPM), 防止与平衡PID相位冲突
+#define VELOCITY_LPF_ALPHA   0.99f   // 速度低通滤波: fc=0.32Hz@200Hz, 在3Hz处衰减90%, 消除相位干扰
+// 偏航修正: 轮速和(旋转分量)反馈增益, 防止原地自旋
+#define YAW_K                0.05f
 
-// ============ IMU / 姿态 (6轴互补滤波) ============
+// ============ 移动控制 (前进/转向) ============
+#define MOVE_ANGLE_GAIN    0.03f   // phoneY(-100~100) -> targetAngle, max +-3 度
+#define STEER_GAIN         0.15f   // phoneX(-100~100) -> steer RPM, max +-15 RPM
+#define MOVE_INPUT_LPF     0.90f   // 移动输入低通 (平滑摇杆抖动+释放)
+#define STEER_INPUT_LPF    0.85f   // 转向输入低通
+
+// ============ IMU / 姿态 (6轴互补滤波, 无需校准) ============
+// 实测: 竖直raw=+90°, 前倾极限raw=+77°(-13°), 后仰极限raw=+105°(+15°)
+#define PITCH_MOUNT_OFFSET (-90.0f) // 安装偏移: raw-90 → 竖直=0°, 前倾为负, 后仰为正
 #define COMP_ALPHA     0.98f  // 互补滤波系数 (越大越信陀螺仪)
 #define GYRO_LPF_ALPHA 0.5f   // 陀螺仪低通滤波 (0.5=更强平滑，抑制D项对gyro尖峰的过度放大)
 #define TARGET_LPF_ALPHA 0.85f // 目标角低通 (越大越平滑)
-#define FALL_ANGLE     12.0f  // 跌倒角度 (12V@低电时电机扭矩不足以在14°纠偏，提前放弃)
-#define FALL_CONFIRM_COUNT 2   // 连续超阈值次数(200Hz下约10ms)后判定跌倒
-#define START_ANGLE     6.0f  // 启动角度阈值 (从更小角度启动，保留更多扭矩余量)
-#define PITCH_MOUNT_OFFSET 0.0f  // CoreS3 安装角度校正 (逆时针90° 可试 -90 或 90)
+#define FALL_ANGLE     14.0f  // 跌倒角度: 支架限位前-13°/后+15°, 14°在两侧极限之间
+#define FALL_CONFIRM_COUNT 3   // 连续超阈值次数, 避免瞬时尖峰误判
+#define STANDUP_MAX_ANGLE 17.0f  // 直接自立: 前倾极限-13°/后仰+15°, ±2°余量 → 最大17°
 
-// ============ 启动安全门限 ============
-// 按下 Stand 前，pitch 角速度必须连续 STABLE_HOLD_COUNT 个控制周期低于此阈值
+// ============ 启动安全门限 (直接自立) ============
+// 按下 Stand 时: 若 pitch 在 ±STANDUP_MAX_ANGLE 内且角速度小、连续几拍静止即可启动
 #define GYRO_START_THRESHOLD  8.0f   // 启动门限: pitch 轴角速度 (°/s)
-#define STABLE_HOLD_COUNT     30     // 连续稳定采样次数 (30×5ms = 150ms)
+#define STABLE_HOLD_COUNT     5      // 连续稳定采样次数 (5×5ms=25ms 静止即可 READY，直接自立)
 
 // ============ 软启动 ============
 // 启动后输出从 0 线性斜坡爬升到全幅，避免电机突转冲击
 #define SOFT_START_MS  80            // 斜坡时长 (ms，过长会在软启动期间漂移倒下)
+
+// ============ 启动保护期 ============
+// 从极限角度启动时, 初始角度已超 FALL_ANGLE, 保护期内不判定跌倒, 给 PID 时间回正
+#define STANDUP_GRACE_MS 500         // 保护期时长 (ms)
 
 // ============ 温度保护 ============
 // 电机温度超过此值开始线性降额，最低保留 30% 输出

@@ -56,7 +56,6 @@ void webInit() {
 
   if (WiFi.status() == WL_CONNECTED) {
     myIP = WiFi.localIP().toString();
-    Serial.printf("WiFi OK! IP: %s\n", myIP.c_str());
     M5.Lcd.setTextColor(GREEN);
     M5.Lcd.printf("IP: %s\n", myIP.c_str());
   } else {

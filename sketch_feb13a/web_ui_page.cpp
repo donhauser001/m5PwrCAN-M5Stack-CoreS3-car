@@ -278,7 +278,7 @@ tr.run-end td {
         Yaw: <span id="val-y">0.0</span>°<br>
         Gyro: <span id="val-g">0.0</span>°/s
       </div>
-      <div class="key-hint">WASD 控制<br>Space 急停</div>
+      <div class="key-hint">WASD 控制<br>Q 启动 / E 急停</div>
     </div>
 
     <div class="pc-keys">
@@ -312,15 +312,8 @@ tr.run-end td {
     </div>
 
     <div class="btn-row">
-      <button class="btn cal" onclick="send('R')">校准 IMU</button>
       <button class="btn run" onclick="send('S')">启动平衡</button>
       <button class="btn stop" onclick="send('E')">急停</button>
-      <button class="btn sm" onclick="send('B,1')">架空阶跃</button>
-      <button class="btn sm" onclick="send('B,0')">停阶跃</button>
-      <button class="btn sm" onclick="send('MS')">速度模式</button>
-      <button class="btn sm" onclick="send('MC')">电流模式</button>
-      <button class="btn sm" onclick="setInnerLoop()">内环参数</button>
-      <button class="btn sm" onclick="setCurrentLimit()">限流</button>
     </div>
   </div>
 
@@ -860,19 +853,6 @@ function send(msg) {
   if (ws && ws.readyState === 1) ws.send(msg);
 }
 
-function setInnerLoop() {
-  const txt = prompt('输入内环 KP,KI,KD (寄存器值), 例如: 250000,500000,5000');
-  if (!txt) return;
-  const parts = txt.split(',').map(s => s.trim());
-  if (parts.length !== 3) return;
-  send(`G,${parts[0]},${parts[1]},${parts[2]}`);
-}
-
-function setCurrentLimit() {
-  const txt = prompt('输入速度模式限流 mA (200~3000), 例如: 1500');
-  if (!txt) return;
-  send(`IL,${txt.trim()}`);
-}
 
 const rp = document.getElementById('rp');
 const ri = document.getElementById('ri');
@@ -927,7 +907,9 @@ window.addEventListener('keydown', (e) => {
       keys[k] = 1;
       updateKeys();
     }
-  } else if (e.code === 'Space') {
+  } else if (e.key === 'q' || e.key === 'Q') {
+    send('S');
+  } else if (e.key === 'e' || e.key === 'E' || e.code === 'Space') {
     send('E');
   }
 });
