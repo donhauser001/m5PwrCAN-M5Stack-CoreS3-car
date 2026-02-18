@@ -307,13 +307,30 @@ tr.run-end td {
       <div class="pid-ctrl">
         <div class="slider-row"><label>Kp</label><input type="range" id="rp" min="0" max="40" step="0.5" value="12"><div class="val" id="vp">12.0</div></div>
         <div class="slider-row"><label>Ki</label><input type="range" id="ri" min="0" max="10" step="0.1" value="0"><div class="val" id="vi">0.0</div></div>
-        <div class="slider-row"><label>Kd</label><input type="range" id="rd" min="0" max="3" step="0.05" value="0.5"><div class="val" id="vd">0.5</div></div>
+        <div class="slider-row"><label>Kd</label><input type="range" id="rd" min="0" max="10" step="0.05" value="0.5"><div class="val" id="vd">0.5</div></div>
       </div>
     </div>
 
     <div class="btn-row">
       <button class="btn run" onclick="send('S')">启动平衡</button>
       <button class="btn stop" onclick="send('E')">急停</button>
+      <button class="btn cal" id="at-btn" onclick="toggleAutoTune()">自动调参</button>
+    </div>
+
+    <div class="panel" id="at-panel" style="display:none">
+      <h3>自动调参 <button class="btn sm" onclick="send('AX')">停止</button></h3>
+      <div style="font-size:12px;line-height:1.6">
+        <div>阶段: <span id="at-phase" style="color:var(--a1)">--</span></div>
+        <div>当前值: <span id="at-cur" style="color:var(--a2)">--</span> &nbsp; 试次: <span id="at-trial">--</span></div>
+        <div>最佳值: <span id="at-best" style="color:var(--ok)">--</span> &nbsp; 存活: <span id="at-score" style="color:var(--ok)">--</span></div>
+        <div>进度: <span id="at-prog">--</span></div>
+        <div style="margin-top:4px">
+          <div style="height:6px;background:#1a2431;border-radius:3px;overflow:hidden">
+            <div id="at-bar" style="height:100%;width:0%;background:var(--a1);transition:width 0.3s"></div>
+          </div>
+        </div>
+        <div id="at-log" style="margin-top:6px;max-height:100px;overflow-y:auto;font-family:monospace;font-size:11px;color:var(--muted)"></div>
+      </div>
     </div>
   </div>
 
@@ -841,6 +858,9 @@ function connect() {
       const p = d.split(',');
       updatePidUI(p[1], p[2], p[3]);
 
+    } else if (d.startsWith('AT,')) {
+      handleAutoTune(d);
+
     } else if (d.startsWith('C,')) {
       const p = d.split(',');
       document.getElementById('kpi-weight').textContent = `${p[1]} g`;
@@ -921,6 +941,80 @@ window.addEventListener('keyup', (e) => {
     updateKeys();
   }
 });
+
+let autoTuning = false;
+
+function toggleAutoTune() {
+  if (autoTuning) {
+    send('AX');
+  } else {
+    if (!confirm('开始自动调参？机器人将自动反复启停约5-10分钟。')) return;
+    send('AT');
+  }
+}
+
+function handleAutoTune(d) {
+  // AT,phase,curVal,trial/total,bestVal,bestMedian,done/total,status
+  const p = d.substring(3).split(',');
+  const phase = p[0];
+  const curVal = p[1];
+  const trial = p[2];
+  const bestVal = p[3];
+  const bestMedian = p[4];
+  const progress = p[5];
+  const status = p[6] || '';
+
+  const panel = document.getElementById('at-panel');
+  const btn = document.getElementById('at-btn');
+
+  if (status === 'DONE' || status === 'STOP') {
+    autoTuning = false;
+    btn.textContent = '自动调参';
+    btn.className = 'btn cal';
+    if (status === 'DONE') {
+      panel.style.display = '';
+      document.getElementById('at-phase').textContent = '完成!';
+      document.getElementById('at-cur').textContent = '--';
+      document.getElementById('at-trial').textContent = '--';
+      document.getElementById('at-bar').style.width = '100%';
+      addAtLog('调参完成: Kp=' + parseFloat(rp.value).toFixed(1) + ' Kd=' + parseFloat(rd.value).toFixed(2));
+    } else {
+      addAtLog('已手动停止');
+    }
+    return;
+  }
+
+  autoTuning = true;
+  btn.textContent = '停止调参';
+  btn.className = 'btn stop';
+  panel.style.display = '';
+
+  const phaseMap = { 'Kp': 'Kp 粗调', 'Kd': 'Kd 粗调', 'Kp*': 'Kp 精调', 'Grid': '网格搜索' };
+  document.getElementById('at-phase').textContent = phaseMap[phase] || phase;
+  document.getElementById('at-cur').textContent = curVal;
+  document.getElementById('at-trial').textContent = trial;
+  document.getElementById('at-best').textContent = bestVal;
+  document.getElementById('at-score').textContent = bestMedian + 'ms';
+  document.getElementById('at-prog').textContent = progress;
+
+  const progParts = progress.split('/');
+  if (progParts.length === 2) {
+    const pct = Math.min(100, (parseInt(progParts[0]) / parseInt(progParts[1])) * 100);
+    document.getElementById('at-bar').style.width = pct + '%';
+  }
+
+  if (status.startsWith('=')) {
+    addAtLog(phase + status);
+  }
+}
+
+function addAtLog(text) {
+  const log = document.getElementById('at-log');
+  const line = document.createElement('div');
+  line.textContent = text;
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
 
 connect();
 </script>

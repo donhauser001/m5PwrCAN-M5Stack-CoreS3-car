@@ -1,5 +1,6 @@
 #include "web_protocol.h"
 
+#include "auto_tune.h"
 #include "can_motor.h"
 #include "config.h"
 #include "display.h"
@@ -22,6 +23,16 @@ void handleWebDisconnect() {
 }
 
 void handleWebTextCommand(const String &cmd) {
+  if (cmd == "AT") {
+    autoTuneStart();
+    return;
+  }
+  if (cmd == "AX") {
+    autoTuneStop();
+    return;
+  }
+  if (isAutoTuning()) return;
+
   if (cmd.startsWith("J,")) {
     int jx = 0;
     int jy = 0;

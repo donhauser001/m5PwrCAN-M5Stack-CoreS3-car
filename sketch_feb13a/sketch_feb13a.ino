@@ -17,6 +17,7 @@
 #include "imu_balance.h"
 #include "web_control.h"
 #include "display.h"
+#include "auto_tune.h"
 
 // ============ 时间管理 ============
 static unsigned long lastCtrlUs  = 0;
@@ -106,9 +107,9 @@ void loop() {
         lastCtrlUs = nowUs;
     }
 
-    // --- 触屏: 左=Kp-, 右=Kp+, 中=站立 ---
+    // --- 触屏: 左=Kp-, 右=Kp+, 中=站立 (自动调参时屏蔽) ---
     auto tc = M5.Touch.getDetail();
-    if (tc.wasPressed()) {
+    if (tc.wasPressed() && !isAutoTuning()) {
         int third = screenW / 3;
         if (tc.x < third) {
             Kp = max(0.0f, Kp - 1.0f);
@@ -125,6 +126,9 @@ void loop() {
             }
         }
     }
+
+    // --- 自动调参状态机 ---
+    autoTuneUpdate();
 
     // --- 低频任务 ---
     unsigned long nowMs = millis();

@@ -78,8 +78,8 @@
 
 // ============ 速度补偿 (防漂移) ============
 #define VELOCITY_K           0.05f   // 线速度→RPM增益
-#define VELOCITY_CORR_LIMIT  5.0f    // 速度修正最大贡献(RPM), 防止与平衡PID相位冲突
-#define VELOCITY_LPF_ALPHA   0.99f   // 速度低通滤波: fc=0.32Hz@200Hz, 在3Hz处衰减90%, 消除相位干扰
+#define VELOCITY_CORR_LIMIT  5.0f    // 速度修正最大贡献(RPM)
+#define VELOCITY_LPF_ALPHA   0.99f   // 速度低通滤波
 // 偏航修正: 轮速和(旋转分量)反馈增益, 防止原地自旋
 #define YAW_K                0.05f
 
@@ -91,7 +91,7 @@
 
 // ============ IMU / 姿态 (6轴互补滤波, 无需校准) ============
 // 实测: 竖直raw=+90°, 前倾极限raw=+77°(-13°), 后仰极限raw=+105°(+15°)
-#define PITCH_MOUNT_OFFSET (-90.0f) // 安装偏移: raw-90 → 竖直=0°, 前倾为负, 后仰为正
+#define PITCH_MOUNT_OFFSET (-90.0f) // 安装偏移: raw竖直=+90°, 偏移-90→controlPitch=0
 #define COMP_ALPHA     0.98f  // 互补滤波系数 (越大越信陀螺仪)
 #define GYRO_LPF_ALPHA 0.5f   // 陀螺仪低通滤波 (0.5=更强平滑，抑制D项对gyro尖峰的过度放大)
 #define TARGET_LPF_ALPHA 0.85f // 目标角低通 (越大越平滑)

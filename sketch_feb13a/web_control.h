@@ -16,3 +16,6 @@ void webBroadcastAngle();
 
 // 广播电机参数到手机
 void webBroadcastMotor();
+
+// 广播任意文本消息 (供 auto_tune 等模块使用)
+void webBroadcastText(const char* msg);

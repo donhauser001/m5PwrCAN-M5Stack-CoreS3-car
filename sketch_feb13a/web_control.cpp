@@ -93,3 +93,7 @@ void webBroadcastMotor() {
   buildWebMotorMessage(msg, sizeof(msg));
   wsServer.broadcastTXT(msg);
 }
+
+void webBroadcastText(const char* msg) {
+  wsServer.broadcastTXT(msg);
+}
