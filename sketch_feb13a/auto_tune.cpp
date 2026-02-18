@@ -78,6 +78,8 @@ static void startTrial() {
         setMotorModeAll(MODE_CURRENT);
 
     activateBalance();
+    pidIntegral = 12.0f;
+
     at.runStart = millis();
     at.running  = true;
     at.waiting  = false;
