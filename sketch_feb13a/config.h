@@ -56,21 +56,21 @@
 // 电流模式下, 平衡输出(RPM)到电流命令(mA)的线性映射
 #define CURRENT_MODE_GAIN_MA_PER_RPM 35.0f
 #define CURRENT_MODE_LIMIT_MA        1800
-// 克服静摩擦: 小输出先置零，超过阈值后抬升到最小有效转速
-#define OUTPUT_DEADBAND_RPM 4
-#define MIN_EFFECTIVE_RPM  6
-#define OUTPUT_SLEW_RPM_PER_CYCLE 3
+// FOC 电机内部已处理低速/静摩擦，外部不再需要死区和限速
+#define OUTPUT_DEADBAND_RPM       0   // 死区关闭: 任何 PID 输出都应立即传递给电机
+#define MIN_EFFECTIVE_RPM         0   // 最小有效转速关闭: 不再跳变
+#define OUTPUT_SLEW_RPM_PER_CYCLE 0   // 0 = 禁用斜率限制, PID 输出直达电机
 
 // ============ 平衡方向 ============
 // 如果机器人往倾斜方向跑(正反馈), 把这个值从 1 改成 -1 (或反过来)
 #define BALANCE_DIR  (1)
 
 // ============ PID 默认参数 (速度模式: 输出单位 RPM) ============
-#define DEFAULT_KP   8.0f    // RPM/degree
+#define DEFAULT_KP   6.0f    // RPM/degree
 #define DEFAULT_KI   0.0f    // 先关闭, 稳定后可加
-#define DEFAULT_KD   0.45f   // RPM/(deg/s) (加大D阻尼，抑制12V低扭矩下的震荡)
+#define DEFAULT_KD   1.2f    // RPM/(deg/s) (从1.0微调+20%, 压制缓慢发散的振荡)
 #define INTEGRAL_LIMIT 80.0f  // 积分限幅 (RPM·s)
-#define D_LIMIT        120.0f // D 项最大贡献 (RPM)
+#define D_LIMIT        150.0f // D 项最大贡献 (RPM, 上次120在gyro≈130°/s时被裁剪, 提高到150避免峰值削波)
 
 // ============ 速度补偿 (真实编码器速度防漂移) ============
 // 线速度 mm/s → 扣减 RPM 的增益
@@ -78,7 +78,7 @@
 
 // ============ IMU / 姿态 (6轴互补滤波) ============
 #define COMP_ALPHA     0.98f  // 互补滤波系数 (越大越信陀螺仪)
-#define GYRO_LPF_ALPHA 0.5f   // 陀螺仪低通滤波 (D项去噪, 0.5=更快响应，配合加大的Kd)
+#define GYRO_LPF_ALPHA 0.5f   // 陀螺仪低通滤波 (0.5=更强平滑，抑制D项对gyro尖峰的过度放大)
 #define TARGET_LPF_ALPHA 0.85f // 目标角低通 (越大越平滑)
 #define FALL_ANGLE     12.0f  // 跌倒角度 (12V@低电时电机扭矩不足以在14°纠偏，提前放弃)
 #define FALL_CONFIRM_COUNT 2   // 连续超阈值次数(200Hz下约10ms)后判定跌倒

@@ -32,31 +32,7 @@ static int           benchStartRpm   = -1;
 static int           lastCmdRpmR     = 0;
 static int           lastCmdRpmL     = 0;
 
-static int applyMinEffectiveRpm(int rpm) {
-    int mag = abs(rpm);
-    if (mag <= OUTPUT_DEADBAND_RPM) {
-        return 0;
-    }
-    if (mag < MIN_EFFECTIVE_RPM) {
-        mag = MIN_EFFECTIVE_RPM;
-    }
-    return rpm > 0 ? mag : -mag;
-}
-
-static int applySlewLimit(int target, int previous) {
-    int delta = target - previous;
-    if (delta > OUTPUT_SLEW_RPM_PER_CYCLE) {
-        delta = OUTPUT_SLEW_RPM_PER_CYCLE;
-    } else if (delta < -OUTPUT_SLEW_RPM_PER_CYCLE) {
-        delta = -OUTPUT_SLEW_RPM_PER_CYCLE;
-    }
-    return previous + delta;
-}
-
-static void stopBenchStepInternal() {
-    benchMode = false;
-    benchCmdRpm = 0;
-    benchStartRpm = -1;
+static void clearControlOutputState() {
     pidOutput = 0;
     cmdSpdR = 0;
     cmdSpdL = 0;
@@ -67,6 +43,26 @@ static void stopBenchStepInternal() {
     dbgSentL = 0;
     lastCmdRpmR = 0;
     lastCmdRpmL = 0;
+}
+
+static int applyOutputShaping(int rpm) {
+    int mag = abs(rpm);
+    if (OUTPUT_DEADBAND_RPM > 0 && mag <= OUTPUT_DEADBAND_RPM) return 0;
+    if (MIN_EFFECTIVE_RPM > 0 && mag > 0 && mag < MIN_EFFECTIVE_RPM) mag = MIN_EFFECTIVE_RPM;
+    return rpm > 0 ? mag : -mag;
+}
+
+static int applySlewLimit(int target, int previous) {
+    if (OUTPUT_SLEW_RPM_PER_CYCLE <= 0) return target;
+    int delta = constrain(target - previous, -OUTPUT_SLEW_RPM_PER_CYCLE, OUTPUT_SLEW_RPM_PER_CYCLE);
+    return previous + delta;
+}
+
+static void stopBenchStepInternal() {
+    benchMode = false;
+    benchCmdRpm = 0;
+    benchStartRpm = -1;
+    clearControlOutputState();
     stopMotors();
 }
 
@@ -212,13 +208,7 @@ void balanceControl(float dt) {
 
     // --- 诊断模式: 等待用户手扶静止后按 Stand ---
     if (diagMode) {
-        dbgPidRaw = 0;
-        dbgPidClamped = 0;
-        dbgAfterDeadzone = 0;
-        dbgSentR = 0;
-        dbgSentL = 0;
-        lastCmdRpmR = 0;
-        lastCmdRpmL = 0;
+        clearControlOutputState();
         bool angleOk = fabs(controlPitch) < START_ANGLE;
         bool gyroOk  = fabs(gyroRate) < GYRO_START_THRESHOLD;
         if (angleOk && gyroOk) {
@@ -244,13 +234,7 @@ void balanceControl(float dt) {
     }
 
     if (fallen) {
-        dbgPidRaw = 0;
-        dbgPidClamped = 0;
-        dbgAfterDeadzone = 0;
-        dbgSentR = 0;
-        dbgSentL = 0;
-        lastCmdRpmR = 0;
-        lastCmdRpmL = 0;
+        clearControlOutputState();
         stopMotors();
         return;
     }
@@ -264,6 +248,7 @@ void balanceControl(float dt) {
             stableCount      = 0;
             fallConfirmCount = 0;
             pidIntegral      = 0;
+            clearControlOutputState();
             Serial.printf("FALLEN! pitch=%.1f\n", controlPitch);
             return;
         }
@@ -317,8 +302,7 @@ void balanceControl(float dt) {
     // ---- 转向 (手机 X 输入) ----
     float steer = phoneX * 5.0f;
     int baseOut = constrain((int)pidOutput, -OUTPUT_LIMIT, OUTPUT_LIMIT);
-    int baseAfterDeadzone = applyMinEffectiveRpm(baseOut);
-    dbgAfterDeadzone = (float)baseAfterDeadzone;
+    dbgAfterDeadzone = (float)baseOut;
 
     int targetR = constrain((int)(pidOutput + steer), -OUTPUT_LIMIT, OUTPUT_LIMIT);
     int targetL = constrain((int)(pidOutput - steer), -OUTPUT_LIMIT, OUTPUT_LIMIT);
@@ -327,8 +311,8 @@ void balanceControl(float dt) {
     lastCmdRpmR = slewR;
     lastCmdRpmL = slewL;
 
-    int outR = applyMinEffectiveRpm(slewR);
-    int outL = applyMinEffectiveRpm(slewL);
+    int outR = applyOutputShaping(slewR);
+    int outL = applyOutputShaping(slewL);
     dbgSentR = outR;
     dbgSentL = outL;
 
@@ -364,15 +348,17 @@ bool activateBalance() {
     if (angleOk && gyroOk && stableOk) {
         diagMode        = false;
         fallen          = false;
+        phoneX          = 0;
+        phoneY          = 0;
         pidIntegral     = 0;
         lastError       = 0;
         fallConfirmCount = 0;
-        targetAngleFilt = targetAngle;
+        targetAngle     = 0;
+        targetAngleFilt = 0;
         softStartActive = true;
         softStartMs     = millis();
         stableCount     = 0;
-        lastCmdRpmR     = 0;
-        lastCmdRpmL     = 0;
+        clearControlOutputState();
         Serial.printf(">>> BALANCE ON  pitch=%.1f° gyro=%.1f°/s  soft-start %dms <<<\n",
                       controlPitch, gyroRate, SOFT_START_MS);
         return true;

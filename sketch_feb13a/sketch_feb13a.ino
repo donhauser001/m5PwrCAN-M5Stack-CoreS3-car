@@ -89,18 +89,37 @@ void setup() {
 // ============ Loop ============
 void loop() {
     M5.update();
-    webLoop();
 
-    // --- 诊断模式: 等待手动按 Stand 启动 (不自动启动) ---
-
-    // --- 高频控制循环 (200Hz) ---
+    // --- 高频控制循环 (固定步长 200Hz) ---
+    // 固定 dt 可避免网络/串口偶发阻塞造成的等效参数漂移与控制突变。
     unsigned long nowUs = micros();
-    if (nowUs - lastCtrlUs >= CTRL_US) {
-        float dt = (nowUs - lastCtrlUs) / 1000000.0f;
-        lastCtrlUs = nowUs;
-        if (dt > 0.05f) dt = 0.05f;
+    int catchup = 0;
+    while ((nowUs - lastCtrlUs) >= CTRL_US && catchup < 6) {
+        lastCtrlUs += CTRL_US;
+        const float dt = CTRL_US / 1000000.0f;
         updateIMU(dt);
         balanceControl(dt);
+        catchup++;
+    }
+    if ((nowUs - lastCtrlUs) >= CTRL_US) {
+        lastCtrlUs = nowUs;
+    }
+
+    // --- 网络任务 (平衡时减少处理，降低阻塞) ---
+    webLoop();
+
+    // --- 网络任务后再补一轮控制 (减少 WiFi 引起的控制空白) ---
+    nowUs = micros();
+    catchup = 0;
+    while ((nowUs - lastCtrlUs) >= CTRL_US && catchup < 4) {
+        lastCtrlUs += CTRL_US;
+        const float dt = CTRL_US / 1000000.0f;
+        updateIMU(dt);
+        balanceControl(dt);
+        catchup++;
+    }
+    if ((nowUs - lastCtrlUs) >= CTRL_US) {
+        lastCtrlUs = nowUs;
     }
 
     // --- 触屏: 左=Kp-, 右=Kp+, 中=校准/站立 ---
@@ -130,20 +149,21 @@ void loop() {
     // --- 低频任务 ---
     unsigned long nowMs = millis();
 
-    // 屏幕刷新 (150ms)
-    if (nowMs - lastDispMs > 150) {
+    // 屏幕刷新 — 平衡期完全跳过 (SPI操作约30-40ms，严重阻塞控制环)
+    bool balancing = !diagMode && !fallen && !benchMode;
+    if (!balancing && (nowMs - lastDispMs > 500)) {
         lastDispMs = nowMs;
         updateDisplay();
     }
 
-    // WebSocket 姿态广播 (20ms → 50Hz，捕捉起步瞬间动态)
-    if (nowMs - lastWsMs > 20) {
+    // WebSocket 姿态广播 (50ms → 20Hz, 从20ms提高到50ms减少WiFi阻塞)
+    if (nowMs - lastWsMs > 50) {
         lastWsMs = nowMs;
         webBroadcastAngle();
     }
 
-    // 电机状态广播 (250ms)
-    if (nowMs - lastMotorWsMs > 250) {
+    // 电机状态广播 (500ms)
+    if (nowMs - lastMotorWsMs > 500) {
         lastMotorWsMs = nowMs;
         webBroadcastMotor();
     }
