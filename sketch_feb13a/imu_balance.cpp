@@ -17,6 +17,10 @@
 static float         filteredGyro  = 0;
 static float         filteredLinSpeed = 0;
 
+// ---- 位置锁定: 记录"锚点", 漂移后自动回正 ----
+static float         anchorDistanceMM = 0;
+static bool          positionLockActive = false;
+
 // ---- 稳定计数 (diagMode 下统计连续满足启动条件的控制周期数, stableCount 已在 globals) ----
 static int           fallConfirmCount = 0;
 
@@ -183,14 +187,15 @@ void balanceControl(float dt) {
         fallConfirmCount++;
         if (fallConfirmCount >= FALL_CONFIRM_COUNT) {
             stopMotors();
-            fallen           = true;
-            softStartActive  = false;
-            startupGraceActive = false;
-            stableCount      = 0;
-            fallConfirmCount = 0;
-            pidIntegral      = 0;
-            smoothPhoneX     = 0;
-            smoothPhoneY     = 0;
+            fallen              = true;
+            softStartActive     = false;
+            startupGraceActive  = false;
+            positionLockActive  = false;
+            stableCount         = 0;
+            fallConfirmCount    = 0;
+            pidIntegral         = 0;
+            smoothPhoneX        = 0;
+            smoothPhoneY        = 0;
             clearControlOutputState();
             return;
         }
@@ -202,12 +207,33 @@ void balanceControl(float dt) {
     targetAngleFilt = TARGET_LPF_ALPHA * targetAngleFilt
                     + (1.0f - TARGET_LPF_ALPHA) * targetAngle;
 
+    // ---- 位置+速度环: 修正目标角度 (而非 PID 输出) ----
+    float adjustedTarget = targetAngleFilt;
+    if (!startupGraceActive) {
+        filteredLinSpeed = VELOCITY_LPF_ALPHA * filteredLinSpeed
+                         + (1.0f - VELOCITY_LPF_ALPHA) * linearSpeed;
+        if (!positionLockActive) {
+            anchorDistanceMM = distanceMM;
+            positionLockActive = true;
+        }
+        if (fabs(phoneY) > 1.0f)
+            anchorDistanceMM = distanceMM;
+
+        float posCorr = (distanceMM - anchorDistanceMM) * POSITION_K;
+        float velCorr = filteredLinSpeed * VELOCITY_K;
+        float totalCorr = constrain(posCorr + velCorr,
+                                    -POS_VEL_CORR_LIMIT, POS_VEL_CORR_LIMIT);
+        adjustedTarget += totalCorr;
+    } else {
+        filteredLinSpeed = 0;
+        positionLockActive = false;
+    }
+
     // ---- 角度 PID (内环: 输出 RPM) ----
-    // 恢复模式使用更强参数, 正常模式使用标准参数
     float useKp = startupGraceActive ? RECOVERY_KP : Kp;
     float useKd = startupGraceActive ? RECOVERY_KD : Kd;
 
-    float error = controlPitch - targetAngleFilt;
+    float error = controlPitch - adjustedTarget;
     if (fabs(error) < INTEGRAL_DECAY_THRESHOLD) {
         pidIntegral += error * dt;
     } else {
@@ -220,15 +246,6 @@ void balanceControl(float dt) {
     float dTerm = constrain(useKd * filteredGyro, -D_LIMIT, D_LIMIT);
 
     float rawOutput = (pTerm + iTerm + dTerm) * BALANCE_DIR;
-    if (!startupGraceActive) {
-        filteredLinSpeed = VELOCITY_LPF_ALPHA * filteredLinSpeed
-                         + (1.0f - VELOCITY_LPF_ALPHA) * linearSpeed;
-        float velCorr = constrain(filteredLinSpeed * VELOCITY_K,
-                                  -VELOCITY_CORR_LIMIT, VELOCITY_CORR_LIMIT);
-        rawOutput -= velCorr;
-    } else {
-        filteredLinSpeed = 0;
-    }
     dbgPidRaw = rawOutput;
     float clampedOutput = constrain(rawOutput, -(float)OUTPUT_LIMIT, (float)OUTPUT_LIMIT);
     dbgPidClamped = clampedOutput;
@@ -301,13 +318,16 @@ bool activateBalance() {
         phoneY          = 0;
         smoothPhoneX    = 0;
         smoothPhoneY    = 0;
-        pidIntegral     = 0;
-        lastError       = 0;
-        filteredLinSpeed = 0;
-        fallConfirmCount = 0;
-        targetAngle     = 0;
-        targetAngleFilt = 0;
-        stableCount     = 0;
+        pidIntegral        = 0;
+        lastError          = 0;
+        filteredLinSpeed    = 0;
+        fallConfirmCount   = 0;
+        targetAngle        = 0;
+        targetAngleFilt    = 0;
+        stableCount        = 0;
+        distanceMM         = 0;
+        anchorDistanceMM   = 0;
+        positionLockActive = false;
         clearControlOutputState();
         if (fabs(controlPitch) >= RECOVERY_ENTER_ANGLE) {
             // 大角度启动(>8°): 恢复模式, 跳过软启动, 立即全力回正

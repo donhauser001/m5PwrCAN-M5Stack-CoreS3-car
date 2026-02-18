@@ -220,8 +220,8 @@ void setMotorCurrent(uint8_t id, int32_t mA) {
   d[5] = (val >> 8) & 0xFF;
   d[6] = (val >> 16) & 0xFF;
   d[7] = (val >> 24) & 0xFF;
-  // 1ms 超时: 仍远快于 5ms 控制周期, 给 TX 队列排空一点时间, 减少静默丢帧
-  if (!canSend(id, CMD_WRITE, 0, d, 1))
+  // 非阻塞: 500Hz(2ms)周期容不下阻塞等待, 队列满时丢帧而非卡死控制环
+  if (!canSend(id, CMD_WRITE, 0, d, 0))
     canTxFailCount++;
 }
 

@@ -73,36 +73,37 @@
 #define DEFAULT_KD   1.40f   // RPM/(deg/s) 用户实测最佳值
 #define INTEGRAL_LIMIT 20.0f  // 积分限幅 (deg·s); Ki*limit=10RPM封顶, 防止过冲
 #define INTEGRAL_DECAY_THRESHOLD 2.0f  // |error|>此值时积分开始衰减, 大扰动时让P+D主导
-#define INTEGRAL_DECAY_RATE      0.95f // 大误差时每周期积分乘以此值(快速衰减)
+#define INTEGRAL_DECAY_RATE      0.98f // 大误差时每周期积分衰减 (~100ms τ, 500Hz等效)
 #define D_LIMIT        300.0f // D 项最大贡献 (RPM), 与 OUTPUT_LIMIT 一致, 保证D项充分制动
 
-// ============ 速度补偿 (防漂移) ============
-#define VELOCITY_K           0.10f   // 线速度→RPM增益 (恢复阶段已由startupGraceActive保护)
-#define VELOCITY_CORR_LIMIT  15.0f   // 速度修正最大贡献(RPM)
-#define VELOCITY_LPF_ALPHA   0.98f   // 速度低通滤波 (~0.25s响应, 恢复阶段归零不受影响)
+// ============ 位置+速度环 (防漂移, 修正目标角度) ============
+#define POSITION_K           0.004f  // 位置→目标角修正 (度/mm), 软弹簧防过冲
+#define VELOCITY_K           0.008f  // 速度→目标角修正 (度/(mm/s)), 强阻尼吸收动能
+#define POS_VEL_CORR_LIMIT   5.0f    // 位置+速度联合修正上限 (度), 5°×Kp=87RPM等效
+#define VELOCITY_LPF_ALPHA   0.992f  // 速度低通滤波 (~250ms τ, 500Hz等效)
 // 偏航修正: 轮速和(旋转分量)反馈增益, 防止原地自旋
 #define YAW_K                0.05f
 
 // ============ 移动控制 (前进/转向) ============
 #define MOVE_ANGLE_GAIN    0.03f   // phoneY(-100~100) -> targetAngle, max +-3 度
 #define STEER_GAIN         0.15f   // phoneX(-100~100) -> steer RPM, max +-15 RPM
-#define MOVE_INPUT_LPF     0.90f   // 移动输入低通 (平滑摇杆抖动+释放)
-#define STEER_INPUT_LPF    0.85f   // 转向输入低通
+#define MOVE_INPUT_LPF     0.96f   // 移动输入低通 (~50ms τ, 500Hz等效)
+#define STEER_INPUT_LPF    0.94f   // 转向输入低通 (~30ms τ, 500Hz等效)
 
 // ============ IMU / 姿态 (6轴互补滤波, 无需校准) ============
 // 实测: 竖直raw=+90°, 前倾极限raw=+77°(-13°), 后仰极限raw=+105°(+15°)
-#define PITCH_MOUNT_OFFSET (-90.0f) // 安装偏移: raw竖直=+90°, 偏移-90→controlPitch=0
-#define COMP_ALPHA     0.98f  // 互补滤波系数 (越大越信陀螺仪)
-#define GYRO_LPF_ALPHA 0.5f   // 陀螺仪低通滤波 (0.5=更强平滑，抑制D项对gyro尖峰的过度放大)
-#define TARGET_LPF_ALPHA 0.85f // 目标角低通 (越大越平滑)
+#define PITCH_MOUNT_OFFSET (-93.0f) // 安装偏移: 往后调3° (5°过多导致前倾, 回调到3°)
+#define COMP_ALPHA     0.992f // 互补滤波 (~250ms τ, 500Hz等效, 从200Hz的0.98转换)
+#define GYRO_LPF_ALPHA 0.76f  // 陀螺仪低通 (~7ms τ, 500Hz等效, 从200Hz的0.5转换)
+#define TARGET_LPF_ALPHA 0.94f // 目标角低通 (~30ms τ, 500Hz等效, 从200Hz的0.85转换)
 #define FALL_ANGLE     14.0f  // 跌倒角度: 支架限位前-13°/后+15°, 14°在两侧极限之间
-#define FALL_CONFIRM_COUNT 3   // 连续超阈值次数, 避免瞬时尖峰误判
+#define FALL_CONFIRM_COUNT 8   // 8×2ms=16ms确认窗口 (500Hz等效, 从200Hz的3×5ms=15ms转换)
 #define STANDUP_MAX_ANGLE 17.0f  // 直接自立: 前倾极限-13°/后仰+15°, ±2°余量 → 最大17°
 
 // ============ 启动安全门限 (直接自立) ============
 // 按下 Stand 时: 若 pitch 在 ±STANDUP_MAX_ANGLE 内且角速度小、连续几拍静止即可启动
 #define GYRO_START_THRESHOLD  8.0f   // 启动门限: pitch 轴角速度 (°/s)
-#define STABLE_HOLD_COUNT     5      // 连续稳定采样次数 (5×5ms=25ms 静止即可 READY，直接自立)
+#define STABLE_HOLD_COUNT     12     // 连续稳定采样次数 (12×2ms=24ms, 500Hz等效)
 
 // ============ 软启动 (仅正常角度启动时使用, 极限角度启动跳过) ============
 #define SOFT_START_MS  100           // 斜坡时长 (ms)
@@ -120,7 +121,7 @@
 #define TEMP_THROTTLE_DEG  55.0f     // 降额起始温度 (°C)
 
 // ============ 控制循环 ============
-#define CTRL_HZ  200
+#define CTRL_HZ  500
 #define CTRL_US  (1000000 / CTRL_HZ)
 
 // ============ WiFi ============

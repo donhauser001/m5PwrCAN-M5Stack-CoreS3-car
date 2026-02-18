@@ -75,7 +75,7 @@ void setup() {
 void loop() {
     M5.update();
 
-    // --- 高频控制循环 (固定步长 200Hz) ---
+    // --- 高频控制循环 (固定步长 500Hz / 2ms) ---
     // 固定 dt 可避免网络/串口偶发阻塞造成的等效参数漂移与控制突变。
     unsigned long nowUs = micros();
     int catchup = 0;

@@ -37,8 +37,8 @@ void handleWebTextCommand(const String &cmd) {
     int jx = 0;
     int jy = 0;
     sscanf(cmd.c_str() + 2, "%d,%d", &jx, &jy);
-    phoneX = jx;
-    phoneY = jy;
+    phoneX = -jx;
+    phoneY = -jy;
     targetAngle = phoneY * MOVE_ANGLE_GAIN;
     return;
   }
