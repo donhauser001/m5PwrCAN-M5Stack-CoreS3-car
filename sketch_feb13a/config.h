@@ -54,9 +54,9 @@
 #define MOTOR_SPEED_LOOP_KI  500000   // 0.05
 #define MOTOR_SPEED_LOOP_KD  5000     // 0.05
 // 电流模式下, 平衡输出(RPM)到电流命令(mA)的线性映射
-// 物理推算: 0.84kg机器人(含支架)、CoG≈60mm、电机扭矩常数≈0.065Nm/A → 约66mA/deg/motor
-// Kp=6 RPM/deg → 需 GAIN≥11 才能在P项单独抵抗重力; 取10, D项补齐差额
-#define CURRENT_MODE_GAIN_MA_PER_RPM 10.0f
+// GAIN=6: PID线性区扩展到0-167RPM, P和D各有独立控制余量
+// GAIN=10时P项在5.7°即饱和1000mA, D项完全无效 → 改为6后D项在小角度有充分制动力
+#define CURRENT_MODE_GAIN_MA_PER_RPM 6.0f
 #define CURRENT_MODE_LIMIT_MA        1000   // 短时可承受1A, 连续500mA; 平衡时脉冲式使用
 // FOC 电机内部已处理低速/静摩擦，外部不再需要死区和限速
 #define OUTPUT_DEADBAND_RPM       0   // 死区关闭: 任何 PID 输出都应立即传递给电机
@@ -68,13 +68,13 @@
 #define BALANCE_DIR  (1)
 
 // ============ PID 默认参数 (速度模式: 输出单位 RPM) ============
-#define DEFAULT_KP   6.0f    // RPM/degree
-#define DEFAULT_KI   0.5f    // 消除稳态角度偏差; 0→0.5, 防止因重心偏移导致持续漂移
-#define DEFAULT_KD   1.2f    // RPM/(deg/s) (从1.0微调+20%, 压制缓慢发散的振荡)
+#define DEFAULT_KP   17.5f   // RPM/degree (实测最佳值, 配合GAIN=6: 1°→105mA, 重力66mA)
+#define DEFAULT_KI   0.5f    // 消除稳态角度偏差; Ki*limit=10RPM封顶
+#define DEFAULT_KD   3.0f    // RPM/(deg/s) (匹配高Kp, GAIN=6下D项有充足制动余量)
 #define INTEGRAL_LIMIT 20.0f  // 积分限幅 (deg·s); Ki*limit=10RPM封顶, 防止过冲
 #define INTEGRAL_DECAY_THRESHOLD 2.0f  // |error|>此值时积分开始衰减, 大扰动时让P+D主导
 #define INTEGRAL_DECAY_RATE      0.95f // 大误差时每周期积分乘以此值(快速衰减)
-#define D_LIMIT        200.0f // D 项最大贡献 (RPM), 给D项更多空间抑制大振荡
+#define D_LIMIT        300.0f // D 项最大贡献 (RPM), 与 OUTPUT_LIMIT 一致, 保证D项充分制动
 
 // ============ 速度补偿 (防漂移) ============
 #define VELOCITY_K           0.05f   // 线速度→RPM增益
@@ -104,13 +104,16 @@
 #define GYRO_START_THRESHOLD  8.0f   // 启动门限: pitch 轴角速度 (°/s)
 #define STABLE_HOLD_COUNT     5      // 连续稳定采样次数 (5×5ms=25ms 静止即可 READY，直接自立)
 
-// ============ 软启动 ============
-// 启动后输出从 0 线性斜坡爬升到全幅，避免电机突转冲击
-#define SOFT_START_MS  80            // 斜坡时长 (ms，过长会在软启动期间漂移倒下)
+// ============ 软启动 (仅正常角度启动时使用, 极限角度启动跳过) ============
+#define SOFT_START_MS  100           // 斜坡时长 (ms)
 
-// ============ 启动保护期 ============
-// 从极限角度启动时, 初始角度已超 FALL_ANGLE, 保护期内不判定跌倒, 给 PID 时间回正
-#define STANDUP_GRACE_MS 500         // 保护期时长 (ms)
+// ============ 极限角度恢复模式 ============
+// 从支架极限角度启动时, 使用更强PID全力回正, 回到安全区后切换回正常参数
+#define RECOVERY_KP          20.0f  // 恢复模式 Kp: 全力拉回
+#define RECOVERY_KD          4.0f   // 恢复模式 Kd: 强阻尼防止回正过冲
+#define RECOVERY_ENTER_ANGLE 8.0f   // 恢复模式进入: 启动时|pitch|>此值即用恢复模式(覆盖前倾-12°)
+#define RECOVERY_EXIT_ANGLE  5.0f   // 恢复模式退出: |pitch|<此值后切换回正常PID
+#define STANDUP_GRACE_MS     800    // 保护期时长 (ms, 恢复期间不判跌倒)
 
 // ============ 温度保护 ============
 // 电机温度超过此值开始线性降额，最低保留 30% 输出

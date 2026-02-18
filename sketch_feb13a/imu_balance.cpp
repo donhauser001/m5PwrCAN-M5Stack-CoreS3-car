@@ -170,9 +170,9 @@ void balanceControl(float dt) {
         return;
     }
 
-    // ---- 启动保护期管理: 角度回到安全区 或 超时后结束 ----
+    // ---- 恢复模式管理: 角度回到安全区 或 超时后结束 ----
     if (startupGraceActive) {
-        if (fabs(controlPitch) < FALL_ANGLE) {
+        if (fabs(controlPitch) < RECOVERY_EXIT_ANGLE) {
             startupGraceActive = false;
         } else if ((millis() - startupGraceMs) >= STANDUP_GRACE_MS) {
             startupGraceActive = false;
@@ -203,17 +203,21 @@ void balanceControl(float dt) {
                     + (1.0f - TARGET_LPF_ALPHA) * targetAngle;
 
     // ---- 角度 PID (内环: 输出 RPM) ----
+    // 恢复模式使用更强参数, 正常模式使用标准参数
+    float useKp = startupGraceActive ? RECOVERY_KP : Kp;
+    float useKd = startupGraceActive ? RECOVERY_KD : Kd;
+
     float error = controlPitch - targetAngleFilt;
     if (fabs(error) < INTEGRAL_DECAY_THRESHOLD) {
         pidIntegral += error * dt;
     } else {
-        pidIntegral *= INTEGRAL_DECAY_RATE;  // 大误差时快速衰减积分, 让 P+D 主导恢复
+        pidIntegral *= INTEGRAL_DECAY_RATE;
     }
     pidIntegral = constrain(pidIntegral, -INTEGRAL_LIMIT, INTEGRAL_LIMIT);
 
-    float pTerm = Kp * error;
+    float pTerm = useKp * error;
     float iTerm = Ki * pidIntegral;
-    float dTerm = constrain(Kd * filteredGyro, -D_LIMIT, D_LIMIT);
+    float dTerm = constrain(useKd * filteredGyro, -D_LIMIT, D_LIMIT);
 
     float rawOutput = (pTerm + iTerm + dTerm) * BALANCE_DIR;
     filteredLinSpeed = VELOCITY_LPF_ALPHA * filteredLinSpeed
@@ -299,16 +303,18 @@ bool activateBalance() {
         fallConfirmCount = 0;
         targetAngle     = 0;
         targetAngleFilt = 0;
-        softStartActive = true;
-        softStartMs     = millis();
         stableCount     = 0;
         clearControlOutputState();
-        // 从极限角度启动时, 初始角度可能已超 FALL_ANGLE, 开启保护期
-        if (fabs(controlPitch) >= FALL_ANGLE) {
+        if (fabs(controlPitch) >= RECOVERY_ENTER_ANGLE) {
+            // 大角度启动(>8°): 恢复模式, 跳过软启动, 立即全力回正
             startupGraceActive = true;
             startupGraceMs     = millis();
+            softStartActive    = false;
         } else {
+            // 小角度启动: 软启动斜坡
             startupGraceActive = false;
+            softStartActive    = true;
+            softStartMs        = millis();
         }
         return true;
     }
